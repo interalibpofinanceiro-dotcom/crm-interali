@@ -178,7 +178,7 @@
     flex-shrink:0;
     display:flex;
     flex-direction:column;
-    max-height:calc(100vh - 205px);
+    max-height:calc(100vh - var(--board-offset, 205px));
   }
   .column-head{
     display:flex; align-items:center; justify-content:space-between;
@@ -460,9 +460,49 @@
   .toast.show{opacity:1; transform:translateX(-50%) translateY(0); pointer-events:auto;}
   .toast .dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0;}
 
+  /* ---------- ETAPA TABS (mobile: navega uma etapa por vez) ---------- */
+  .etapa-tabs{
+    display:none;
+    gap:8px;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    padding:2px clamp(16px,4vw,40px) 12px;
+    scrollbar-width:none;
+  }
+  .etapa-tabs::-webkit-scrollbar{display:none;}
+  .etapa-tab{
+    flex-shrink:0;
+    border:1px solid var(--line);
+    background:rgba(255,255,255,0.02);
+    color:var(--ink-dim);
+    padding:8px 14px;
+    border-radius:999px;
+    font-size:12.5px;
+    font-weight:600;
+    white-space:nowrap;
+    display:flex; align-items:center; gap:6px;
+  }
+  .etapa-tab .column-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+  .etapa-tab.active{background:var(--gold); border-color:var(--gold); color:var(--navy-950);}
+  .etapa-tab.active .column-dot{background:var(--navy-950) !important;}
+
   @media (max-width: 640px){
     .pipeline-stats{display:none;}
-    .column{width:264px;}
+
+    .filters, #filters-captacao, #filters-email{
+      flex-wrap:nowrap;
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+      padding-bottom:2px;
+      scrollbar-width:none;
+    }
+    .filters::-webkit-scrollbar{display:none;}
+
+    .etapa-tabs{display:flex;}
+    .board-wrap{overflow-x:hidden; padding-left:16px; padding-right:16px;}
+    .board{min-width:0;}
+    .column{width:100%;}
+    .column.mobile-hidden{display:none;}
   }
 </style>
 </head>
@@ -495,6 +535,8 @@
     <div class="filters" id="filters-email"></div>
   </div>
 </div>
+
+<div class="etapa-tabs" id="etapa-tabs"></div>
 
 <div class="board-wrap">
   <div class="board" id="board"></div>
@@ -1032,6 +1074,7 @@ let leads = [];
 let activeFilter = "todos";
 let activeCaptacao = "todos";
 let activeSemAbertura48h = false;
+let mobileEtapaAtiva = ETAPAS[0].id; // qual etapa fica visível no mobile (uma por vez)
 
 /* =========================================================
    E-MAIL: data_envio / data_abertura / status_email
@@ -1232,7 +1275,7 @@ function renderBoard(){
     const colLeads = visibleLeads.filter(l=>l.etapa===etapa.id);
 
     const col = document.createElement("div");
-    col.className = "column";
+    col.className = "column" + (etapa.id === mobileEtapaAtiva ? "" : " mobile-hidden");
 
     col.innerHTML = `
       <div class="column-head">
@@ -1534,13 +1577,44 @@ function formatPhone(digits){
 }
 
 /* =========================================================
+   ETAPA TABS (mobile: mostra 1 etapa por vez, evita a barra
+   fixa "tampar" os leads em telas pequenas)
+   ========================================================= */
+function renderEtapaTabs(){
+  const container = document.getElementById("etapa-tabs");
+  container.innerHTML = "";
+  ETAPAS.forEach(etapa=>{
+    const count = leads.filter(l=>l.etapa===etapa.id).length;
+    const tab = document.createElement("button");
+    tab.className = "etapa-tab" + (etapa.id === mobileEtapaAtiva ? " active" : "");
+    tab.innerHTML = `<span class="column-dot" style="background:${etapa.color}"></span>${etapa.label} <span class="mono">${count}</span>`;
+    tab.onclick = ()=>{ mobileEtapaAtiva = etapa.id; renderAll(); };
+    container.appendChild(tab);
+  });
+}
+
+// Recalcula quanto espaço a barra do topo + as abas ocupam, pra coluna
+// visível aproveitar o resto da altura da tela (em vez de um valor fixo
+// que não se ajusta quando os filtros crescem no mobile).
+function ajustarAlturaBoard(){
+  const topbar = document.querySelector(".topbar");
+  const tabs = document.getElementById("etapa-tabs");
+  const offset = topbar.offsetHeight + tabs.offsetHeight + 40;
+  document.documentElement.style.setProperty("--board-offset", offset + "px");
+}
+
+/* =========================================================
    INIT
    ========================================================= */
 function renderAll(){
   renderFilters();
+  renderEtapaTabs();
   renderBoard();
   updateStats();
+  ajustarAlturaBoard();
 }
+
+window.addEventListener("resize", ajustarAlturaBoard);
 
 (async function init(){
   document.getElementById("board").innerHTML = '<p style="color:var(--ink-dim);padding:40px 20px;font-size:13px;">Conectando ao armazenamento compartilhado...</p>';
