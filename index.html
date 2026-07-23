@@ -1089,7 +1089,7 @@ function gerarRelatorioEmails(){
    Troque a URL abaixo pela URL do seu Web App do Apps Script
    (veja o passo a passo que a Sirlene... ops, que a Interali recebeu)
    ========================================================= */
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyCQfH8oG7kZzUgDYwvFnC35SS6qEHEq2xYg59khF1pyj4vYB8lQY31JjZUW8MqKZ0r/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbziPkXGfBMUMOeHjoM7dh9wd9masvNxQye0IwMFeP57Fgg7t4pyiw_PfoCDSpIWAC4N/exec";
 
 function loadFromLocalStorage(){
   try{
@@ -1112,7 +1112,8 @@ async function loadLeads(){
       leads = data;
     } else {
       leads = loadFromLocalStorage() || SEED.slice();
-      showToast("A planilha está conectada, mas ainda não tem nenhum lead. Mostrando leads salvos neste navegador.");
+      showToast("A planilha está conectada, mas ainda não tem nenhum lead. Enviando os leads deste navegador para a planilha...");
+      saveLeads();
     }
   }catch(e){
     console.error("Erro ao carregar da planilha", e);
