@@ -310,6 +310,27 @@
   }
   .link-add-phone:hover{color:#5fd68a; border-color:rgba(95,214,138,0.4);}
 
+  .email-status{
+    margin-top:9px;
+    font-size:11.5px; font-weight:600;
+    padding:5px 9px; border-radius:8px;
+    display:inline-flex; align-items:center; gap:5px;
+    border:1px solid var(--line);
+  }
+  .email-status.email-enviado{color:#7fbce0; border-color:rgba(127,188,224,0.25);}
+  .email-status.email-aberto{color:var(--green); border-color:rgba(63,178,127,0.3);}
+  .email-status.email-alert{color:var(--amber); border-color:rgba(224,168,54,0.35); background:rgba(224,168,54,0.08);}
+
+  .relatorio-table{width:100%; border-collapse:collapse; font-size:13px; margin-top:6px;}
+  .relatorio-table th, .relatorio-table td{
+    text-align:left; padding:8px 10px; border-bottom:1px solid var(--line);
+  }
+  .relatorio-table th{color:var(--ink-dim); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:0.04em;}
+  .relatorio-table td.num{font-family:'JetBrains Mono',monospace;}
+  .relatorio-empty{color:var(--ink-dim); font-size:13px; padding:14px 0;}
+  .relatorio-resumo{display:flex; gap:18px; margin-bottom:14px; flex-wrap:wrap;}
+  .relatorio-resumo .pstat b{color:var(--gold-soft);}
+
   .card-notes{
     margin-top:10px;
     width:100%;
@@ -466,10 +487,12 @@
   <div class="controls-row">
     <div class="filters" id="filters"></div>
     <button class="btn-secondary" id="btn-reset-seed" title="Descarta o que foi salvo neste navegador e recarrega a lista de leads mais recente do arquivo">↺ Recarregar dados originais</button>
+    <button class="btn-secondary" id="btn-open-relatorio">📊 Relatório e-mails</button>
     <button class="btn-add" id="btn-open-modal">+ Adicionar Lead</button>
   </div>
   <div class="controls-row" style="margin-top:10px;">
     <div class="filters" id="filters-captacao"></div>
+    <div class="filters" id="filters-email"></div>
   </div>
 </div>
 
@@ -532,6 +555,31 @@
         <button type="submit" class="btn-save">Salvar lead</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- MODAL: RELATÓRIO DE E-MAILS -->
+<div class="overlay" id="overlay-relatorio">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>Relatório de e-mails</h2>
+      <button class="close-x" id="btn-close-relatorio">✕</button>
+    </div>
+    <p class="modal-sub">Enviados e abertos por dia, com base em data_envio / data_abertura de cada lead.</p>
+
+    <div class="relatorio-resumo">
+      <div class="pstat"><b id="rel-total-enviados">0</b><small>Enviados</small></div>
+      <div class="pstat"><b id="rel-total-abertos">0</b><small>Abertos</small></div>
+      <div class="pstat"><b id="rel-total-whatsapp">0</b><small>Sem abertura 48h+ (WhatsApp)</small></div>
+    </div>
+
+    <table class="relatorio-table">
+      <thead>
+        <tr><th>Data</th><th>Enviados</th><th>Abertos</th></tr>
+      </thead>
+      <tbody id="relatorio-tabela-body"></tbody>
+    </table>
+    <div id="relatorio-vazio" class="relatorio-empty" style="display:none;">Nenhum e-mail enviado ainda.</div>
   </div>
 </div>
 
@@ -983,13 +1031,65 @@ SEED.push(
 let leads = [];
 let activeFilter = "todos";
 let activeCaptacao = "todos";
+let activeSemAbertura48h = false;
+
+/* =========================================================
+   E-MAIL: data_envio / data_abertura / status_email
+   Campos preenchidos pelo backend (Apps Script) quando o e-mail é
+   disparado (data_envio) e quando o pixel de rastreamento é acessado
+   (data_abertura). status_email: "" | "enviado" | "aberto" | "follow_up_whatsapp"
+   ========================================================= */
+const HORAS_LIMITE_WHATSAPP = 48;
+
+function horasDesde(isoString){
+  if(!isoString) return null;
+  return (Date.now() - new Date(isoString).getTime()) / (1000*60*60);
+}
+
+// Lead com e-mail enviado, sem abertura registrada, há 48h ou mais → follow-up via WhatsApp
+function precisaWhatsapp48h(lead){
+  if(!lead.data_envio || lead.data_abertura) return false;
+  const horas = horasDesde(lead.data_envio);
+  return horas !== null && horas >= HORAS_LIMITE_WHATSAPP;
+}
+
+function formatDateHoraBR(isoString){
+  return new Date(isoString).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
+}
+
+function statusEmailInfo(lead){
+  if(precisaWhatsapp48h(lead)){
+    return { emoji:"⏱️", label:"Sem abertura 48h+ — abordar via WhatsApp", cls:"email-alert" };
+  }
+  if(lead.data_abertura){
+    return { emoji:"👀", label:"Aberto em " + formatDateHoraBR(lead.data_abertura), cls:"email-aberto" };
+  }
+  if(lead.data_envio){
+    return { emoji:"✉️", label:"Enviado em " + formatDateHoraBR(lead.data_envio), cls:"email-enviado" };
+  }
+  return null;
+}
+
+// Agrupa enviados/abertos por dia (YYYY-MM-DD), ordenado cronologicamente
+function gerarRelatorioEmails(){
+  const porDia = {};
+  function linha(dia){
+    if(!porDia[dia]) porDia[dia] = { data:dia, enviados:0, abertos:0 };
+    return porDia[dia];
+  }
+  leads.forEach(lead=>{
+    if(lead.data_envio) linha(lead.data_envio.slice(0,10)).enviados++;
+    if(lead.data_abertura) linha(lead.data_abertura.slice(0,10)).abertos++;
+  });
+  return Object.keys(porDia).sort().map(dia=>porDia[dia]);
+}
 
 /* =========================================================
    CONEXÃO COM O BACKEND GRATUITO (Google Sheets + Apps Script)
    Troque a URL abaixo pela URL do seu Web App do Apps Script
    (veja o passo a passo que a Sirlene... ops, que a Interali recebeu)
    ========================================================= */
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzfTObV4LSJ9XNolajEQHzyXfhZzRNA4WcSXNwcipdUTJOpf8RYOb6h7AdC59DOoWtd0g/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyCQfH8oG7kZzUgDYwvFnC35SS6qEHEq2xYg59khF1pyj4vYB8lQY31JjZUW8MqKZ0r/exec";
 
 function loadFromLocalStorage(){
   try{
@@ -1088,6 +1188,15 @@ function renderFilters(){
     pill.onclick = ()=>{ activeCaptacao = opt.id; renderAll(); };
     capContainer.appendChild(pill);
   });
+
+  const emailContainer = document.getElementById("filters-email");
+  emailContainer.innerHTML = "";
+  const count48h = leads.filter(precisaWhatsapp48h).length;
+  const pill48h = document.createElement("button");
+  pill48h.className = "filter-pill filter-pill-secondary" + (activeSemAbertura48h ? " active" : "");
+  pill48h.innerHTML = `⏱️ Sem abertura 48h+ <span class="count">${count48h}</span>`;
+  pill48h.onclick = ()=>{ activeSemAbertura48h = !activeSemAbertura48h; renderAll(); };
+  emailContainer.appendChild(pill48h);
 }
 
 /* =========================================================
@@ -1112,6 +1221,9 @@ function renderBoard(){
   let visibleLeads = activeFilter === "todos" ? leads : leads.filter(l=>l.nicho===activeFilter);
   if(activeCaptacao !== "todos"){
     visibleLeads = visibleLeads.filter(l=>l.captacao===activeCaptacao);
+  }
+  if(activeSemAbertura48h){
+    visibleLeads = visibleLeads.filter(precisaWhatsapp48h);
   }
   const maxColCount = Math.max(1, ...ETAPAS.map(e=>visibleLeads.filter(l=>l.etapa===e.id).length));
 
@@ -1173,6 +1285,7 @@ function renderCard(lead){
   const etapaOptions = ETAPAS.map(e=>`<option value="${e.id}" ${e.id===lead.etapa?"selected":""}>${e.label}</option>`).join("");
   const nichoOptions = Object.entries(NICHOS).map(([id,n])=>`<option value="${id}" ${id===lead.nicho?"selected":""}>${n.emoji} ${n.label}</option>`).join("");
   const captacaoOptions = Object.entries(CAPTACOES).map(([id,c])=>`<option value="${id}" ${id===lead.captacao?"selected":""}>${c.emoji} ${c.label}</option>`).join("");
+  const emailInfo = statusEmailInfo(lead);
 
   card.innerHTML = `
     <div class="card-top">
@@ -1195,6 +1308,8 @@ function renderCard(lead){
       ${lead.email ? `<a class="link-chip link-mail" href="mailto:${lead.email}">✉️ E-mail</a>` : ""}
       ${lead.social ? `<a class="link-chip link-social" href="${lead.social}" target="_blank" rel="noopener">🔗 Perfil</a>` : ""}
     </div>
+
+    ${emailInfo ? `<div class="email-status ${emailInfo.cls}">${emailInfo.emoji} ${emailInfo.label}</div>` : ""}
 
     <textarea class="card-notes" placeholder="Notas rápidas...">${escapeHtml(lead.nota || "")}</textarea>
 
@@ -1331,7 +1446,38 @@ document.getElementById("btn-reset-seed").onclick = ()=>{
 document.getElementById("btn-close-modal").onclick = closeModal;
 document.getElementById("btn-cancel").onclick = closeModal;
 overlay.addEventListener("click", e=>{ if(e.target === overlay) closeModal(); });
-document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeModal(); });
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeModal(); closeRelatorio(); });
+
+/* =========================================================
+   MODAL: RELATÓRIO DE E-MAILS
+   ========================================================= */
+const overlayRelatorio = document.getElementById("overlay-relatorio");
+
+function openRelatorio(){
+  const linhas = gerarRelatorioEmails();
+  const corpo = document.getElementById("relatorio-tabela-body");
+  const vazio = document.getElementById("relatorio-vazio");
+
+  corpo.innerHTML = linhas.map(l=>`
+    <tr>
+      <td>${new Date(l.data + "T00:00:00").toLocaleDateString("pt-BR")}</td>
+      <td class="num">${l.enviados}</td>
+      <td class="num">${l.abertos}</td>
+    </tr>
+  `).join("");
+  vazio.style.display = linhas.length ? "none" : "block";
+
+  document.getElementById("rel-total-enviados").textContent = linhas.reduce((s,l)=>s+l.enviados, 0);
+  document.getElementById("rel-total-abertos").textContent = linhas.reduce((s,l)=>s+l.abertos, 0);
+  document.getElementById("rel-total-whatsapp").textContent = leads.filter(precisaWhatsapp48h).length;
+
+  overlayRelatorio.classList.add("show");
+}
+function closeRelatorio(){ overlayRelatorio.classList.remove("show"); }
+
+document.getElementById("btn-open-relatorio").onclick = openRelatorio;
+document.getElementById("btn-close-relatorio").onclick = closeRelatorio;
+overlayRelatorio.addEventListener("click", e=>{ if(e.target === overlayRelatorio) closeRelatorio(); });
 
 document.getElementById("lead-form").addEventListener("submit", e=>{
   e.preventDefault();
